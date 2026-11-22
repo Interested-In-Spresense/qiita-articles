@@ -1,0 +1,40 @@
+name: Publish to Qiita (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      article:
+        description: Article to publish
+        required: true
+        type: choice
+        options:
+          - ADXL335_Spresense
+          - SubCore_SPI_Spresense
+      operation:
+        description: Create a new item or update an existing item
+        required: true
+        type: choice
+        options:
+          - create
+          - update
+      item_id:
+        description: Existing Qiita item ID (required only for update)
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Post to Qiita
+        env:
+          QIITA_TOKEN: ${{ secrets.QIITA_TOKEN }}
+          ARTICLE: ${{ inputs.article }}
+          OPERATION: ${{ inputs.operation }}
+          ITEM_ID: ${{ inputs.item_id }}
+        run: |
+          python scripts/publish.py --article "$ARTICLE" --operation "$OPERATION" --item-id "$ITEM_ID"
