@@ -47,188 +47,10 @@ SpresenseではMainCoreだけでなく、SubCoreからもSPIを使うことが�
 
 https://github.com/Interested-In-Spresense/sketches/tree/master/MultiCore/SubSPI
 
-### MainCore側
+- [MainCore.ino](https://github.com/Interested-In-Spresense/sketches/blob/master/MultiCore/SubSPI/MainCore/MainCore.ino)
+- [SubCore1.ino](https://github.com/Interested-In-Spresense/sketches/blob/master/MultiCore/SubSPI/SubCore1/SubCore1.ino)
 
-```cpp
-/*
- *  MainCore.ino - SubSPI Example using MM-ToF10 (MainCore)
- *
- *  Launches SubCore1 which reads ToF distance via SPI5 (MM-ToF10 add-on board).
- *  MainCore requests distance every 100 ms, prints to Serial, and logs to SD card.
- *
- *  SD card log file: /tof_log.csv
- *    columns: elapsed_ms, distance_mm
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- */
-
-#ifdef SUBCORE
-#error "Core selection is wrong!!"
-#endif
-
-#include <MP.h>
-#include <SDHCI.h>
-
-#define SUBCORE_ID        1
-#define MSG_REQ_DISTANCE  10
-#define MSG_RET_DISTANCE  11
-#define LOG_FILENAME      "tof_log.csv"
-#define TEST_DURATION_MS  10000
-
-struct ToFData {
-  float distance_mm;
-};
-
-SDClass SD;
-File    logFile;
-unsigned long startTime = 0;
-
-void setup() {
-  Serial.begin(115200);
-  delay(500);  // non-blocking startup; avoid while(!Serial) stall
-
-  // --- SD card ---
-  if (!SD.begin()) {
-    Serial.println("[Main] SD init failed — logging disabled");
-  } else {
-    // Append to existing file (or create new)
-    logFile = SD.open(LOG_FILENAME, FILE_WRITE);
-    if (logFile) {
-      logFile.println("elapsed_ms,distance_mm");
-      logFile.flush();
-      Serial.print("[Main] Logging to ");
-      Serial.println(LOG_FILENAME);
-    } else {
-      Serial.println("[Main] SD open failed — logging disabled");
-    }
-  }
-
-  // --- SubCore ---
-  MP.begin(SUBCORE_ID);
-  MP.RecvTimeout(3000);
-
-  startTime = millis();
-
-  Serial.println("[Main] SubSPI MM-ToF10 sample started");
-  Serial.println("elapsed_ms,distance_mm");
-}
-
-void loop() {
-  // Check if test duration exceeded
-  if (millis() - startTime > TEST_DURATION_MS) {
-    if (logFile) {
-      logFile.close();
-      Serial.println("[Main] File closed after 10 seconds");
-    }
-    while (1) { delay(10); }  // Stop
-  }
-
-  // Request ToF distance from SubCore1
-  int ret = MP.Send(MSG_REQ_DISTANCE, (uint32_t)0, SUBCORE_ID);
-  if (ret < 0) {
-    Serial.print("[Main] MP.Send failed: ");
-    Serial.println(ret);
-    return;
-  }
-
-  int8_t  msgid;
-  ToFData *data = nullptr;
-
-  if (MP.Recv(&msgid, &data, SUBCORE_ID) >= 0
-      && msgid == MSG_RET_DISTANCE && data != nullptr) {
-
-    unsigned long t = millis();
-
-    // Serial output
-    Serial.print(t);
-    Serial.print(',');
-    Serial.println(data->distance_mm, 1);
-
-    // SD card output
-    if (logFile) {
-      logFile.print(t);
-      logFile.print(',');
-      logFile.println(data->distance_mm, 1);
-      logFile.flush();
-    }
-  } else {
-    Serial.println("[Main] No data received");
-  }
-}
-```
-
-### SubCore1側
-
-```cpp
-/*
- *  SubCore1.ino - MultiCore SPI Example using MM-ToF10 (SubCore1)
- *
- *  Reads ToF distance via SPI5 using the MM-ToF10 library and sends
- *  1D distance data (mm) to MainCore on request.
- *
- *  Hardware: MM-ToF10 add-on board connected to Spresense extension board.
- *  Library : https://github.com/Interested-In-Spresense/MM-ToF10
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- */
-
-#if (SUBCORE != 1)
-#error "Core selection is wrong!!"
-#endif
-
-#include <MP.h>
-#include <MM-TOF10.h>
-
-#define MSG_REQ_DISTANCE  10
-#define MSG_RET_DISTANCE  11
-
-// Shared result buffer (SubCore static → MainCore reads via MP pointer)
-struct ToFData {
-  float distance_mm;
-};
-static ToFData tofBuf;
-
-// ---- Setup -------------------------------------------------------------
-void setup() {
-  Serial.begin(115200);
-  delay(500);
-
-  // Initialize MM-ToF10 (uses SPI5 internally)
-  MMToF10.begin();
-  MMToF10.sync();
-  MMToF10.nomal(ShortDistance, LowSpeed);
-
-  MP.begin();
-  MP.RecvTimeout(3000);
-  Serial.println("[Sub1] MM-ToF10 ready");
-}
-
-// ---- Loop --------------------------------------------------------------
-void loop() {
-  int8_t msgid;
-  uint32_t dummy;
-
-  if (MP.Recv(&msgid, &dummy) >= 0 && msgid == MSG_REQ_DISTANCE) {
-    tofBuf.distance_mm = MMToF10.get1d();
-
-    Serial.print("[Sub1] dist=");
-    Serial.print(tofBuf.distance_mm, 1);
-    Serial.println(" mm");
-    Serial.flush();
-
-    MP.Send(MSG_RET_DISTANCE, &tofBuf);
-
-  } else {
-    Serial.println("[Sub1] recv timeout");
-  }
-}
-```
+以下では、SubCoreからSPIを使うためのポイントとなる部分を抜粋して説明します。
 
 ## コードの説明
 
@@ -252,10 +74,9 @@ tofBuf.distance_mm = MMToF10.get1d();
 
 ### MainCoreとのデータの受け渡し
 
-MainCoreは `MP.begin(SUBCORE_ID)` でSubCore1を起動し、`MP.Send()` で測距を要求します。SubCore1は要求を受け取ると、SPI5経由で測距データを取得し、次の処理で結果を返します。
+MainCoreは `MP.begin(SUBCORE_ID)` でSubCore1を起動し、`MP.Send()` で測距を要求します。SubCore1は要求を受け取ると、SPI5経由で取得した測距結果を `MP.Send()` で返します。
 
 ```cpp
-tofBuf.distance_mm = MMToF10.get1d();
 MP.Send(MSG_RET_DISTANCE, &tofBuf);
 ```
 
